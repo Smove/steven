@@ -19,7 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log"
 	"math"
 	"reflect"
 	"strings"
@@ -64,7 +64,7 @@ func (h handler) Handle(packet interface{}) {
 }
 
 func (handler) ServerMessage(msg *protocol.ServerMessage) {
-	fmt.Printf("MSG(%d): %s\n", msg.Type, msg.Message.Value)
+	log.Printf("MSG(%d): %s\n", msg.Type, msg.Message.Value)
 	Client.chat.Add(msg.Message)
 }
 
@@ -85,7 +85,7 @@ func (handler) Respawn(r *protocol.Respawn) {
 
 func (handler) Disconnect(d *protocol.Disconnect) {
 	disconnectReason = d.Reason
-	fmt.Println("Disconnect: ", disconnectReason)
+	log.Println("Disconnect: ", disconnectReason)
 	Client.network.SignalClose(errManualDisconnect)
 }
 
@@ -426,6 +426,20 @@ func (handler) Animation(p *protocol.Animation) {
 	}
 }
 
+func (handler) EntityEquipment(p *protocol.EntityEquipment) {
+	e, ok := Client.entities.entities[int(p.EntityID)]
+	if !ok {
+		return
+	}
+	switch p.Slot {
+	case 0: // Swing arm
+		if pl, ok := e.(PlayerModelComponent); ok {
+			pl.SetCurrentItem(ItemStackFromProtocol(p.Item))
+		}
+	}
+
+}
+
 func (handler) PlayerListInfo(p *protocol.PlayerInfo) {
 	playerList := Client.playerList.info
 	for _, pl := range p.Players {
@@ -543,5 +557,5 @@ func (h handler) PluginMessage(p *protocol.PluginMessageClientbound) {
 }
 
 func (h handler) ServerBrand(b *pmMinecraftBrand) {
-	fmt.Printf("The server is running: %s\n", b.Brand)
+	log.Printf("The server is running: %s\n", b.Brand)
 }

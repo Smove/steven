@@ -23,13 +23,13 @@ import (
 	"github.com/thinkofdeath/steven/type/direction"
 )
 
-func (ce *clientEntities) registerModels() {
-	ce.container.AddSystem(entitysys.Add, esPlayerModelAdd)
-	ce.container.AddSystem(entitysys.Tick, esPlayerModelTick)
-	ce.container.AddSystem(entitysys.Remove, esPlayerModelRemove)
+func init() {
+	addSystem(entitysys.Add, esPlayerModelAdd)
+	addSystem(entitysys.Tick, esPlayerModelTick)
+	addSystem(entitysys.Remove, esPlayerModelRemove)
 
 	// Generic removal
-	ce.container.AddSystem(entitysys.Remove, esModelRemove)
+	addSystem(entitysys.Remove, esModelRemove)
 }
 
 func appendBox(verts []*render.StaticVertex, x, y, z, w, h, d float32, textures [6]render.TextureInfo) []*render.StaticVertex {
@@ -82,11 +82,16 @@ type playerModelComponent struct {
 	hasNameTag    bool
 	isFirstPerson bool
 
-	dir      float64
-	time     float64
-	idleTime float64
+	dir        float64
+	time       float64
+	idleTime   float64
+	manualMove bool
+	walking    bool
 
 	armTime float64
+
+	heldModel *render.StaticModel
+	heldMat   mgl32.Mat4
 }
 
 func (p *playerModelComponent) Model() *render.StaticModel { return p.model }
@@ -95,8 +100,40 @@ func (p *playerModelComponent) SwingArm() {
 	p.armTime = 15
 }
 
+func (p *playerModelComponent) SetCurrentItem(item *ItemStack) {
+	if p.heldModel != nil {
+		p.heldModel.Free()
+	}
+	if item == nil {
+		return
+	}
+	mdl := getModel(item.Type.Name())
+	if mdl == nil {
+		mdl = getModel("stone")
+	}
+
+	var blk Block
+	if bt, ok := item.Type.(*blockItem); ok {
+		blk = bt.block
+	}
+	mode := "thirdperson"
+
+	var out []*render.StaticVertex
+	if mdl.builtIn == builtInGenerated {
+		out, p.heldMat = genStaticModelFromItem(mdl, blk, mode)
+	} else if mdl.builtIn == builtInFalse {
+		out, p.heldMat = staticModelFromItem(mdl, blk, mode)
+	}
+
+	p.heldModel = render.NewStaticModel([][]*render.StaticVertex{
+		out,
+	})
+	p.heldModel.Radius = 3
+}
+
 type PlayerModelComponent interface {
 	SwingArm()
+	SetCurrentItem(item *ItemStack)
 }
 
 const (
@@ -252,6 +289,9 @@ func esPlayerModelRemove(p *playerModelComponent) {
 	if p.skin != "" {
 		render.FreeSkin(p.skin)
 	}
+	if p.heldModel != nil {
+		p.heldModel.Free()
+	}
 }
 
 func esModelRemove(p interface {
@@ -270,6 +310,9 @@ func esPlayerModelTick(p *playerModelComponent,
 	model := p.model
 
 	model.X, model.Y, model.Z = -float32(x), -float32(y), float32(z)
+	if p.heldModel != nil {
+		p.heldModel.X, p.heldModel.Y, p.heldModel.Z = -float32(x), -float32(y), float32(z)
+	}
 
 	offMat := mgl32.Translate3D(float32(x), -float32(y), float32(z)).
 		Mul4(mgl32.Rotate3DY(math.Pi - float32(r.Yaw())).Mat4())
@@ -301,6 +344,9 @@ func esPlayerModelTick(p *playerModelComponent,
 
 	iTime := p.idleTime
 	iTime += Client.delta * 0.02
+	if iTime > math.Pi*2 {
+		iTime -= math.Pi * 2
+	}
 	p.idleTime = iTime
 
 	if p.armTime <= 0 {
@@ -310,19 +356,19 @@ func esPlayerModelTick(p *playerModelComponent,
 	}
 
 	model.Matrix[playerModelArmRight] = offMat.Mul4(mgl32.Translate3D(6/16.0, -12/16.0-12/16.0, 0))
-	if !p.isFirstPerson {
-		model.Matrix[playerModelArmRight] = model.Matrix[playerModelArmRight].
+	model.Matrix[playerModelArmRight] = model.Matrix[playerModelArmRight].
+		Mul4(mgl32.Rotate3DX(-float32(ang * 0.75)).Mat4()).
+		Mul4(mgl32.Rotate3DZ(float32(math.Cos(iTime)*0.06) - 0.06).Mat4()).
+		Mul4(mgl32.Rotate3DX(float32(math.Sin(iTime)*0.06) - float32((7.5-math.Abs(p.armTime-7.5))/7.5)).Mat4())
+
+	if p.heldModel != nil {
+		p.heldModel.Matrix[0] = offMat.Mul4(mgl32.Translate3D(6/16.0, -12/16.0-12/16.0, 0.0)).
 			Mul4(mgl32.Rotate3DX(-float32(ang * 0.75)).Mat4()).
 			Mul4(mgl32.Rotate3DZ(float32(math.Cos(iTime)*0.06) - 0.06).Mat4()).
-			Mul4(mgl32.Rotate3DX(float32(math.Sin(iTime)*0.06) - float32((7.5-math.Abs(p.armTime-7.))/7.5)).Mat4())
-	} else {
-		pitch := r.Pitch()
-		if pitch > math.Pi {
-			pitch -= math.Pi * 2
-		}
-		model.Matrix[playerModelArmRight] = model.Matrix[playerModelArmRight].
-			Mul4(mgl32.Rotate3DX(float32(-1.2) - float32((7.5-math.Abs(p.armTime-7.5))/7.5) + float32(pitch*0.4)).Mat4()).
-			Mul4(mgl32.Rotate3DZ(-0.15 - float32((7.5-math.Abs(p.armTime-7.5))/15.0)).Mat4())
+			Mul4(mgl32.Rotate3DX(float32(math.Sin(iTime)*0.06) - float32((7.5-math.Abs(p.armTime-7.5))/7.5)).Mat4()).
+			Mul4(mgl32.Translate3D(0, 11/16.0, -5/16.0)).
+			Mul4(mgl32.Rotate3DX(math.Pi).Mat4()).
+			Mul4(p.heldMat)
 	}
 
 	model.Matrix[playerModelArmLeft] = offMat.Mul4(mgl32.Translate3D(-6/16.0, -12/16.0-12/16.0, 0)).
@@ -331,7 +377,7 @@ func esPlayerModelTick(p *playerModelComponent,
 		Mul4(mgl32.Rotate3DX(-float32(math.Sin(iTime) * 0.06)).Mat4())
 
 	update := true
-	if t.X == t.sX && t.Y == t.sY && t.Z == t.sZ {
+	if (!p.manualMove && t.X == t.sX && t.Y == t.sY && t.Z == t.sZ) || (p.manualMove && !p.walking) {
 		if t.stillTime > 5.0 {
 			if math.Abs(time-15) <= 1.5*Client.delta {
 				time = 15

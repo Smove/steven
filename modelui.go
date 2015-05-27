@@ -23,6 +23,23 @@ import (
 	"github.com/thinkofdeath/steven/world/biome"
 )
 
+var modelCache = map[string]*model{}
+
+func getModel(name string) *model {
+	if mdl, ok := modelCache[name]; ok {
+		return mdl
+	}
+	js := &jsModel{}
+	err := loadJSON("minecraft", "models/item/"+name+".json", js)
+	if err != nil {
+		modelCache[name] = nil
+		return nil
+	}
+	mdl := parseModel("minecraft", js)
+	modelCache[name] = mdl
+	return mdl
+}
+
 func modelToUI(mdl *model, block Block) *ui.Model {
 	mat := mgl32.Rotate3DX(math.Pi / 6).Mat4().
 		Mul4(mgl32.Rotate3DY(math.Pi/4 + math.Pi).Mat4()).

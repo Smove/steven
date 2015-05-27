@@ -105,16 +105,17 @@ type ClientState struct {
 		frames    int
 		lastCount time.Time
 	}
-	hotbar                            *ui.Image
-	hotbarUI                          *ui.Image
-	currentHotbarSlot, lastHotbarSlot int
-	lifeUI                            []*ui.Image
-	lifeFillUI                        []*ui.Image
-	foodUI                            []*ui.Image
-	foodFillUI                        []*ui.Image
+	hotbar     *ui.Image
+	hotbarUI   *ui.Image
+	lifeUI     []*ui.Image
+	lifeFillUI []*ui.Image
+	foodUI     []*ui.Image
+	foodFillUI []*ui.Image
 
-	itemNameUI    *ui.Formatted
-	itemNameTimer float64
+	currentHotbarSlot, lastHotbarSlot int
+	lastHotbarItem                    *ItemStack
+	itemNameUI                        *ui.Formatted
+	itemNameTimer                     float64
 
 	network    networkManager
 	chat       ChatUI
@@ -224,6 +225,8 @@ func (c *ClientState) initEntity(head bool) {
 	c.entity = ce
 	ce.hasHead = head
 	ce.isFirstPerson = !head
+	ce.manualMove = true
+	ce.SetCurrentItem(c.lastHotbarItem)
 }
 
 func (c *ClientState) cycleCamera() {
@@ -248,6 +251,7 @@ func (c *ClientState) renderTick(delta float64) {
 	forward, yaw := c.calculateMovement()
 
 	c.LX, c.LY, c.LZ = c.X, c.Y, c.Z
+	lx, ly, lz := c.X, c.Y, c.Z
 
 	if c.GameMode.Fly() {
 		c.X += forward * math.Cos(yaw) * -math.Cos(c.Pitch) * delta * 0.2
@@ -347,6 +351,7 @@ func (c *ClientState) renderTick(delta float64) {
 	c.entity.SetTargetPosition(c.X-ox, c.Y, c.Z-oz)
 	c.entity.SetTargetYaw(-c.Yaw)
 	c.entity.SetTargetPitch(-c.Pitch - math.Pi)
+	c.entity.walking = c.X != lx || c.Y != ly || c.Z != lz
 
 	//  Highlights the target block
 	c.highlightTarget()
@@ -363,9 +368,11 @@ func (c *ClientState) renderTick(delta float64) {
 }
 
 func (c *ClientState) tickItemName() {
-	if c.lastHotbarSlot != c.currentHotbarSlot {
+	item := c.playerInventory.Items[invPlayerHotbarOffset+c.currentHotbarSlot]
+	if c.lastHotbarSlot != c.currentHotbarSlot || item != c.lastHotbarItem {
 		c.lastHotbarSlot = c.currentHotbarSlot
-		item := c.playerInventory.Items[invPlayerHotbarOffset+c.currentHotbarSlot]
+		c.lastHotbarItem = item
+		c.entity.SetCurrentItem(item)
 		if item != nil {
 			var name chat.AnyComponent
 			if di, ok := item.Type.(DisplayTag); ok && di.DisplayName() != "" {
@@ -545,6 +552,8 @@ func (c *ClientState) MouseAction(button glfw.MouseButton, down bool) {
 		if b.Is(Blocks.Air) {
 			return
 		}
+		c.entity.SwingArm()
+		c.network.Write(&protocol.ArmSwing{})
 		c.network.Write(&protocol.PlayerBlockPlacement{
 			Location: protocol.NewPosition(pos.X, pos.Y, pos.Z),
 			Face:     directionToProtocol(face),
